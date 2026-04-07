@@ -266,9 +266,26 @@ export default function DashboardPage() {
     setLoginHistory(data || []);
   }, [user, isAdmin]);
 
+  // Clear all data when user changes (fixes files-not-showing after re-login)
   useEffect(() => {
-    if (user && role) { fetchFiles(); fetchPasswords(); fetchAuditLogs(); fetchThreats(); fetchLoginHistory(); }
-  }, [user, role, fetchFiles, fetchPasswords, fetchAuditLogs, fetchThreats, fetchLoginHistory]);
+    setFiles([]);
+    setPasswords([]);
+    setAuditLogs([]);
+    setThreats([]);
+    setLoginHistory([]);
+    setAiMessages([]);
+    setRevealedPws({});
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (user && role) {
+      fetchFiles();
+      fetchPasswords();
+      fetchAuditLogs();
+      fetchThreats();
+      if (isAdmin) fetchLoginHistory(); // Login history only for admins
+    }
+  }, [user?.id, role, fetchFiles, fetchPasswords, fetchAuditLogs, fetchThreats, fetchLoginHistory, isAdmin]);
 
   // ── Realtime ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -506,12 +523,12 @@ export default function DashboardPage() {
       {/* Tabs */}
       <div className="tabs-scroll" style={{ padding: "14px 20px 0", display: "flex", gap: 4, background: "#111318", borderBottom: "1px solid #ffffff12", position: "sticky", top: 52, zIndex: 99 }}>
         {[
-          { id: "files", label: "📁 My Files" },
+          { id: "files",     label: "📁 My Files" },
           { id: "passwords", label: "🔐 Password Vault" },
-          { id: "audit", label: "📋 Audit Log" },
-          { id: "threats", label: "⚠️ Threats", badge: activeThreats.length || null, badgeClass: "" },
-          { id: "logins", label: "🌍 Login Map" },
-          { id: "ai", label: "✨ AI Assistant", badge: "NEW", badgeClass: "info" },
+          { id: "audit",    label: "📋 Audit Log" },
+          { id: "threats",  label: "⚠️ Threats", badge: activeThreats.length || null, badgeClass: "" },
+          ...(isAdmin ? [{ id: "logins", label: "🌍 Login Map", badge: "ADMIN", badgeClass: "info" }] : []),
+          { id: "ai",       label: "✨ AI Assistant", badge: "NEW", badgeClass: "info" },
         ].map(tab => (
           <button key={tab.id} className={`d-tab${activeTab === tab.id ? " active" : ""}`} onClick={() => setActiveTab(tab.id)}>
             {tab.label}

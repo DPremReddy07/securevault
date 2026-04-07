@@ -90,15 +90,22 @@ export default function LoginPage() {
 
           // Detect anomalies
           let threatFlag = null;
-          if (prevLogins && prevLogins.length > 0) {
-            const last = prevLogins[0];
+          if (prevLogins && prevLogins.length >= 2) {
+            // Use majority country (most frequent) not just last login
+            // This prevents false positives when a user always logs in from India
+            const countryCounts = {};
+            prevLogins.forEach(l => {
+              if (l.country_code) countryCounts[l.country_code] = (countryCounts[l.country_code] || 0) + 1;
+            });
+            const majorityCountry = Object.entries(countryCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
 
-            // New country → flag
-            if (last.country_code && last.country_code !== geo.country_code) {
+            // Only flag if logging in from a DIFFERENT country than the majority
+            if (majorityCountry && majorityCountry !== geo.country_code) {
               threatFlag = "new_country";
             }
 
-            // Impossible travel: >500 km within 1 hour
+            // Impossible travel: >500 km within 1 hour (compare to most recent)
+            const last = prevLogins[0];
             const lastTime = new Date(last.created_at);
             const now = new Date();
             const diffHours = (now - lastTime) / 1000 / 3600;
@@ -108,10 +115,11 @@ export default function LoginPage() {
                 geo.latitude, geo.longitude
               );
               if (dist > 500) {
-                threatFlag = "impossible_travel";
+                threatFlag = "impossible_travel"; // impossible_travel overrides new_country
               }
             }
           }
+
 
           // Insert login log
           await supabase.from("login_logs").insert({
