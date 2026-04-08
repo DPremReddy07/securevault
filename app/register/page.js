@@ -125,7 +125,7 @@ export default function RegisterPage() {
         router.push("/dashboard");
       } else {
         toast.success("Account created! Check your email to confirm your address.");
-        router.push("/");
+        router.push("/login");
       }
     } catch (err) {
       toast.error(err.message || "Registration failed. Try again.");
@@ -377,7 +377,7 @@ export default function RegisterPage() {
         <p style={{ textAlign: "center", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
           Already have an account?{" "}
           <Link
-            href="/"
+            href="/login"
             style={{ color: "var(--accent-light)", fontWeight: 600, textDecoration: "none" }}
             onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.7")}
             onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}

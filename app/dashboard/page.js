@@ -228,7 +228,7 @@ export default function DashboardPage() {
   const fileInputRef = useRef(null);
   const aiChatRef = useRef(null);
 
-  useEffect(() => { if (!roleLoading && !user) router.push("/"); }, [roleLoading, user, router]);
+  useEffect(() => { if (!roleLoading && !user) router.push("/register"); }, [roleLoading, user, router]);
 
   // Detect terminated accounts → redirect to /terminated page
   useEffect(() => {
@@ -268,7 +268,7 @@ export default function DashboardPage() {
     const { data } = await q;
     // Filter out locally-dismissed threats (survives refresh via localStorage)
     let dismissed = new Set();
-    try { dismissed = new Set(JSON.parse(localStorage.getItem("sv_dismissed") || "[]")); } catch {}
+    try { dismissed = new Set(JSON.parse(localStorage.getItem("sv_dismissed") || "[]")); } catch { }
     setThreats((data || []).filter(t => !dismissed.has(t.id)));
   }, [user, isAdmin]);
 
@@ -509,7 +509,7 @@ export default function DashboardPage() {
   // ── Dismiss threat (persisted in localStorage so it survives refresh) ──────
   function dismissThreat(t) {
     let dismissed = [];
-    try { dismissed = JSON.parse(localStorage.getItem("sv_dismissed") || "[]"); } catch {}
+    try { dismissed = JSON.parse(localStorage.getItem("sv_dismissed") || "[]"); } catch { }
     dismissed.push(t.id);
     localStorage.setItem("sv_dismissed", JSON.stringify(dismissed));
     setThreats(p => p.filter(x => x.id !== t.id));
@@ -697,7 +697,7 @@ export default function DashboardPage() {
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontSize: 12, color: "#94a3b8", fontFamily: "monospace", padding: "4px 10px", background: "#1c2130", borderRadius: 20, border: "1px solid #ffffff12" }}>{user?.email}</span>
           {isAdmin && <span style={{ fontSize: 11, padding: "3px 8px", background: "rgba(108,99,255,0.2)", color: "#6c63ff", borderRadius: 10, fontWeight: 700 }}>ADMIN</span>}
-          <button onClick={async () => { await supabase.auth.signOut(); router.push("/"); }}
+          <button onClick={async () => { await supabase.auth.signOut(); router.push("/register"); }}
             style={{ fontSize: 12, padding: "5px 12px", borderRadius: 8, border: "1px solid #ffffff20", background: "transparent", color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
             <LogOut size={13} /> Sign out
           </button>
@@ -707,15 +707,15 @@ export default function DashboardPage() {
       {/* Tabs */}
       <div className="tabs-scroll" style={{ padding: "14px 20px 0", display: "flex", gap: 4, background: "#111318", borderBottom: "1px solid #ffffff12", position: "sticky", top: 52, zIndex: 99 }}>
         {[
-          { id: "files",     label: "📁 My Files" },
+          { id: "files", label: "📁 My Files" },
           { id: "passwords", label: "🔐 Password Vault" },
-          { id: "audit",    label: "📋 Audit Log" },
-          { id: "threats",  label: "⚠️ Threats", badge: activeThreats.length || null, badgeClass: "" },
+          { id: "audit", label: "📋 Audit Log" },
+          { id: "threats", label: "⚠️ Threats", badge: activeThreats.length || null, badgeClass: "" },
           ...(isAdmin ? [
             { id: "logins", label: "🌍 Login Map", badge: "ADMIN", badgeClass: "info" },
             { id: "appeals", label: "🆘 Appeals", badge: appeals.filter(a => a.status === "pending").length || null, badgeClass: "" },
           ] : []),
-          { id: "ai",       label: "✨ AI Assistant", badge: "NEW", badgeClass: "info" },
+          { id: "ai", label: "✨ AI Assistant", badge: "NEW", badgeClass: "info" },
         ].map(tab => (
           <button key={tab.id} className={`d-tab${activeTab === tab.id ? " active" : ""}`} onClick={() => setActiveTab(tab.id)}>
             {tab.label}
@@ -1078,7 +1078,7 @@ export default function DashboardPage() {
               </div>
             ) : appeals.map(a => {
               const statusColor = { pending: "#f59e0b", approved: "#10b981", rejected: "#ef4444" };
-              const statusBg    = { pending: "rgba(245,158,11,.12)", approved: "rgba(16,185,129,.12)", rejected: "rgba(239,68,68,.12)" };
+              const statusBg = { pending: "rgba(245,158,11,.12)", approved: "rgba(16,185,129,.12)", rejected: "rgba(239,68,68,.12)" };
               const isPending = a.status === "pending";
               return (
                 <div key={a.id} style={{ background: "#1c2130", border: `1px solid ${statusColor[a.status]}30`, borderRadius: 12, padding: "16px 18px", marginBottom: 12 }}>
