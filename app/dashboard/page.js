@@ -216,6 +216,8 @@ export default function DashboardPage() {
   const [revealedPws, setRevealedPws] = useState({});
   const [newLoginId, setNewLoginId] = useState(null);
   const [hoveredDot, setHoveredDot] = useState(null);
+  const [mapDays, setMapDays] = useState(7); // 0 = all time
+  const [analyseModal, setAnalyseModal] = useState(null); // { threat, logs, logins }
 
   // modals
   const [deleteModal, setDeleteModal] = useState(null); // file object
@@ -255,7 +257,10 @@ export default function DashboardPage() {
     let q = supabase.from("login_logs").select("*").not("threat_flag", "is", null).order("created_at", { ascending: false }).limit(30);
     if (!isAdmin) q = q.eq("user_id", user.id);
     const { data } = await q;
-    setThreats((data || []).map(t => ({ ...t, dismissed: false })));
+    // Filter out locally-dismissed threats (survives refresh via localStorage)
+    let dismissed = new Set();
+    try { dismissed = new Set(JSON.parse(localStorage.getItem("sv_dismissed") || "[]")); } catch {}
+    setThreats((data || []).filter(t => !dismissed.has(t.id)));
   }, [user, isAdmin]);
 
   const fetchLoginHistory = useCallback(async () => {
@@ -448,6 +453,48 @@ export default function DashboardPage() {
     return tips.join("<br>") + "<br><br>Ask me anything about your files, threats, passwords, encryption, or login history!";
   }
 
+  // ── Admin: fetch full activity of a suspected user for analysis ──────────
+  async function analyseUser(threat) {
+    toast.loading("Fetching user activity…", { id: "analyse" });
+    const uid = threat.user_id;
+    const [{ data: logs }, { data: logins }] = await Promise.all([
+      supabase.from("audit_logs").select("*").eq("user_id", uid).order("created_at", { ascending: false }).limit(50),
+      supabase.from("login_logs").select("*").eq("user_id", uid).order("created_at", { ascending: false }).limit(20),
+    ]);
+    toast.dismiss("analyse");
+    setAnalyseModal({ threat, uid, logs: logs || [], logins: logins || [] });
+  }
+
+  // ── Dismiss threat (persisted in localStorage so it survives refresh) ──────
+  function dismissThreat(t) {
+    let dismissed = [];
+    try { dismissed = JSON.parse(localStorage.getItem("sv_dismissed") || "[]"); } catch {}
+    dismissed.push(t.id);
+    localStorage.setItem("sv_dismissed", JSON.stringify(dismissed));
+    setThreats(p => p.filter(x => x.id !== t.id));
+    toast.success("Threat dismissed");
+  }
+
+  // ── Admin: force-terminate a suspicious user session ─────────────────────
+  async function terminateUser(targetUserId, location) {
+    if (!window.confirm(`⚠️ Terminate session for user from ${location}?\n\nThis will:\n• Sign them out immediately\n• Ban their account\n\nReversible in Supabase dashboard.`)) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch("/api/admin/terminate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ userId: targetUserId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      toast.success(`🔒 User from ${location} terminated & banned`, { duration: 7000, style: { background: "#7f1d1d", color: "#fff", fontWeight: 700 } });
+      fetchThreats();
+      if (isAdmin) fetchLoginHistory();
+    } catch (err) {
+      toast.error("Terminate failed: " + err.message);
+    }
+  }
+
   async function sendAI(q) {
     const question = q || aiInput.trim();
     if (!question) return;
@@ -504,6 +551,102 @@ export default function DashboardPage() {
       {deleteModal && <DeleteModal fileName={deleteModal.name} onConfirm={confirmDelete} onCancel={() => setDeleteModal(null)} />}
       {shareModal && <ShareModal fileName={shareModal} onClose={() => setShareModal(null)} />}
       {addPwModal && <AddPwModal onSave={handleSavePassword} onClose={() => setAddPwModal(false)} />}
+
+      {/* ── User Analysis Modal (admin only) ────────────────────────────── */}
+      {analyseModal && (
+        <div className="d-modal-overlay" onClick={() => setAnalyseModal(null)}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: "#0f1319", border: "1px solid #ffffff18", borderRadius: 18, padding: 28, width: "94%", maxWidth: 640, maxHeight: "88vh", overflowY: "auto", boxShadow: "0 24px 80px rgba(0,0,0,.7)" }}>
+
+            {/* Header */}
+            <div style={{ display: "flex", alignItems: "center", marginBottom: 20 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>
+                🔍 Suspect Activity Analysis
+              </div>
+              <button onClick={() => setAnalyseModal(null)}
+                style={{ marginLeft: "auto", background: "transparent", border: "1px solid #ffffff20", color: "#94a3b8", borderRadius: 6, padding: "3px 10px", fontSize: 13, cursor: "pointer" }}>✕ Close</button>
+            </div>
+
+            {/* Threat summary */}
+            {(() => {
+              const t = analyseModal.threat;
+              const isHigh = t.threat_flag === "impossible_travel";
+              return (
+                <div style={{ background: isHigh ? "rgba(127,29,29,.3)" : "rgba(120,53,15,.2)", border: `1px solid ${isHigh ? "rgba(239,68,68,.3)" : "rgba(251,146,60,.3)"}`, borderRadius: 10, padding: "12px 14px", marginBottom: 18 }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <span style={{ fontSize: 22 }}>{isHigh ? "⚡" : "🌍"}</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: isHigh ? "#f87171" : "#fb923c" }}>
+                        {isHigh ? "Impossible Travel Detected" : "Login from New Country"}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4, fontFamily: "monospace" }}>
+                        {[t.city, t.region, t.country].filter(Boolean).join(", ")} · IP: {t.ip || "N/A"}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#64748b", marginTop: 3 }}>{fmtDate(t.created_at)}</div>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6, fontSize: 10, fontFamily: "monospace", color: "#64748b" }}>
+                    User ID: <span style={{ color: "#a78bfa" }}>{analyseModal.uid}</span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Audit activity */}
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+              📋 Audit Trail <span style={{ fontSize: 11, color: "#64748b", fontWeight: 400 }}>({analyseModal.logs.length} events)</span>
+            </div>
+            <div style={{ background: "#161b24", borderRadius: 10, border: "1px solid #ffffff12", maxHeight: 200, overflowY: "auto", marginBottom: 18 }}>
+              {analyseModal.logs.length === 0
+                ? <p style={{ color: "#64748b", textAlign: "center", padding: "16px 0", fontSize: 12 }}>No audit events found.</p>
+                : analyseModal.logs.map(l => {
+                  const styles = { UPLOAD: ["rgba(108,99,255,.15)", "#6c63ff"], DOWNLOAD: ["rgba(34,211,238,.15)", "#22d3ee"], DELETE: ["rgba(239,68,68,.15)", "#ef4444"], REVEAL: ["rgba(34,211,238,.15)", "#22d3ee"], SHARE: ["rgba(168,85,247,.15)", "#a855f7"], TERMINATE: ["rgba(239,68,68,.15)", "#ef4444"] };
+                  const [bg, color] = styles[l.action] || ["rgba(255,255,255,.05)", "#94a3b8"];
+                  return (
+                    <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #ffffff08", fontSize: 12 }}>
+                      <span style={{ padding: "2px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, minWidth: 62, textAlign: "center", background: bg, color }}>{l.action}</span>
+                      <span style={{ flex: 1, color: "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.detail}</span>
+                      <span style={{ color: "#64748b", fontSize: 10, fontFamily: "monospace", whiteSpace: "nowrap" }}>{fmtDate(l.created_at)}</span>
+                    </div>
+                  );
+                })}
+            </div>
+
+            {/* Login history */}
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+              🌍 Login History <span style={{ fontSize: 11, color: "#64748b", fontWeight: 400 }}>({analyseModal.logins.length} sessions)</span>
+            </div>
+            <div style={{ background: "#161b24", borderRadius: 10, border: "1px solid #ffffff12", maxHeight: 160, overflowY: "auto", marginBottom: 20 }}>
+              {analyseModal.logins.length === 0
+                ? <p style={{ color: "#64748b", textAlign: "center", padding: "16px 0", fontSize: 12 }}>No login records found.</p>
+                : analyseModal.logins.map((l, i) => {
+                  const isThreat = !!l.threat_flag;
+                  return (
+                    <div key={l.id || i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", borderBottom: "1px solid #ffffff08", fontSize: 11, fontFamily: "monospace" }}>
+                      <span style={{ fontSize: 14 }}>{isThreat ? "⚠️" : "✅"}</span>
+                      <span style={{ flex: 1, color: "#94a3b8" }}>{[l.city, l.country].filter(Boolean).join(", ") || "Unknown"}</span>
+                      <span style={{ color: "#64748b" }}>{l.ip}</span>
+                      {isThreat && <span style={{ color: "#ef4444", fontSize: 10, fontWeight: 700 }}>{l.threat_flag === "impossible_travel" ? "⚡ TRAVEL" : "🌍 NEW CTY"}</span>}
+                      <span style={{ color: "#475569" }}>{fmtDate(l.created_at)}</span>
+                    </div>
+                  );
+                })}
+            </div>
+
+            {/* Actions */}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <button onClick={() => { dismissThreat(analyseModal.threat); setAnalyseModal(null); }}
+                style={{ padding: "8px 16px", background: "transparent", border: "1px solid #ffffff20", borderRadius: 8, color: "#94a3b8", fontSize: 13, cursor: "pointer" }}>
+                ✓ Dismiss Threat
+              </button>
+              <button onClick={() => terminateUser(analyseModal.uid, [analyseModal.threat.city, analyseModal.threat.country].filter(Boolean).join(", ") || "Unknown")}
+                style={{ padding: "8px 16px", background: "rgba(239,68,68,.15)", border: "1px solid rgba(239,68,68,.35)", borderRadius: 8, color: "#ef4444", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                🔒 Terminate Session
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Nav */}
       <nav style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", height: 52, background: "#111318", borderBottom: "1px solid #ffffff12", position: "sticky", top: 0, zIndex: 100 }}>
@@ -651,6 +794,11 @@ export default function DashboardPage() {
                   return (
                     <div key={l.id} className="d-log-row">
                       <span className="d-log-badge" style={{ background: bg, color }}>{l.action}</span>
+                      {isAdmin && (
+                        <span style={{ flexShrink: 0, fontSize: 10, fontFamily: "monospace", padding: "1px 6px", borderRadius: 4, background: l.user_id === user?.id ? "rgba(16,185,129,.12)" : "rgba(108,99,255,.12)", color: l.user_id === user?.id ? "#10b981" : "#a78bfa", border: `1px solid ${l.user_id === user?.id ? "rgba(16,185,129,.2)" : "rgba(108,99,255,.2)"}` }}>
+                          {l.user_id === user?.id ? "You" : `usr:${l.user_id?.substring(0, 8)}`}
+                        </span>
+                      )}
                       <span style={{ flex: 1, color: "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.detail}</span>
                       <span style={{ color: "#64748b", fontSize: 11, whiteSpace: "nowrap" }}>{fmtDate(l.created_at)}</span>
                     </div>
@@ -681,7 +829,25 @@ export default function DashboardPage() {
                     <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 3, fontFamily: "monospace" }}>{[t.city, t.region, t.country].filter(Boolean).join(", ")} — IP: {t.ip || "N/A"}</div>
                     <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>{fmtDate(t.created_at)}</div>
                   </div>
-                  <button className="d-dismiss-btn" onClick={() => setThreats(p => p.map((x, xi) => x === t ? { ...x, dismissed: true } : x))}>Dismiss</button>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 5, flexShrink: 0 }}>
+                    {isAdmin && t.user_id !== user?.id && (
+                      <button
+                        onClick={() => analyseUser(t)}
+                        style={{ background: "rgba(108,99,255,.15)", border: "1px solid rgba(108,99,255,.35)", color: "#a78bfa", borderRadius: 6, padding: "3px 9px", fontSize: 11, cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap" }}
+                      >
+                        🔍 Analyse
+                      </button>
+                    )}
+                    <button className="d-dismiss-btn" onClick={() => dismissThreat(t)}>Dismiss</button>
+                    {isAdmin && t.user_id !== user?.id && (
+                      <button
+                        onClick={() => terminateUser(t.user_id, [t.city, t.country].filter(Boolean).join(", ") || "Unknown")}
+                        style={{ background: "rgba(239,68,68,.15)", border: "1px solid rgba(239,68,68,.35)", color: "#ef4444", borderRadius: 6, padding: "3px 9px", fontSize: 11, cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap" }}
+                      >
+                        🔒 Terminate
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -690,10 +856,23 @@ export default function DashboardPage() {
 
         {/* ── LOGIN MAP TAB ── */}
         {activeTab === "logins" && (() => {
-          const withCoords = loginHistory.filter(l => l.latitude && l.longitude);
-          const safeCount = loginHistory.filter(l => !l.threat_flag).length;
-          const flaggedCount = loginHistory.filter(l => !!l.threat_flag).length;
-          const countries = [...new Set(loginHistory.map(l => l.country).filter(Boolean))].length;
+          // Deduplicate: show only the LATEST login per user on the map
+          const latestPerUser = Object.values(
+            loginHistory.reduce((acc, l) => {
+              if (l.latitude && l.longitude) {
+                if (!acc[l.user_id] || new Date(l.created_at) > new Date(acc[l.user_id].created_at))
+                  acc[l.user_id] = l;
+              }
+              return acc;
+            }, {})
+          );
+          // Filter history for timeline based on mapDays (0 = all)
+          const filteredHistory = mapDays
+            ? loginHistory.filter(l => Date.now() - new Date(l.created_at).getTime() < mapDays * 86400000)
+            : loginHistory;
+          const safeCount = filteredHistory.filter(l => !l.threat_flag).length;
+          const flaggedCount = filteredHistory.filter(l => !!l.threat_flag).length;
+          const countries = [...new Set(filteredHistory.map(l => l.country).filter(Boolean))].length;
           return (
             <div style={{ background: "#161b24", border: "1px solid #ffffff12", borderRadius: 14, padding: 20 }}>
               {/* Header */}
@@ -732,7 +911,7 @@ export default function DashboardPage() {
                 </svg>
                 {/* Dots overlay */}
                 <div style={{ position: "absolute", inset: 0, zIndex: 6 }}>
-                  {withCoords.map((l, i) => {
+                  {latestPerUser.map((l, i) => {
                     const pos = latLng2pct(l.latitude, l.longitude);
                     const isThreat = !!l.threat_flag;
                     const isNew = l.id === newLoginId;
@@ -755,7 +934,7 @@ export default function DashboardPage() {
                       </div>
                     );
                   })}
-                  {withCoords.length === 0 && (
+                  {latestPerUser.length === 0 && (
                     <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 7 }}>
                       <span style={{ color: "#6c63ff60", fontSize: 11, fontFamily: "monospace", letterSpacing: 1 }}>
                         NO GEO DATA — LOGINS WILL APPEAR WHEN LOCATION IS DETECTED
@@ -768,7 +947,7 @@ export default function DashboardPage() {
               {/* Stats */}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20 }}>
                 {[
-                  { icon: "⬡", color: "#6c63ff", label: `${loginHistory.length} total` },
+                  { icon: "⬡", color: "#6c63ff", label: `${latestPerUser.length} active user${latestPerUser.length !== 1 ? "s" : ""}` },
                   { icon: "●", color: "#10b981", label: `${safeCount} safe` },
                   { icon: "●", color: "#ef4444", label: `${flaggedCount} flagged` },
                   { icon: "◈", color: "#22d3ee", label: `${countries} countr${countries !== 1 ? "ies" : "y"}` },
@@ -780,12 +959,20 @@ export default function DashboardPage() {
               </div>
 
               {/* Timeline */}
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 12, fontFamily: "monospace" }}>
-                Login History
+              <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "monospace" }}>Login History</div>
+                <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+                  {[{ v: 1, l: "24h" }, { v: 7, l: "7d" }, { v: 30, l: "30d" }, { v: 0, l: "All" }].map(opt => (
+                    <button key={opt.v} onClick={() => setMapDays(opt.v)}
+                      style={{ padding: "2px 8px", fontSize: 10, borderRadius: 4, cursor: "pointer", fontFamily: "monospace", border: `1px solid ${mapDays === opt.v ? "#6c63ff" : "#ffffff15"}`, background: mapDays === opt.v ? "rgba(108,99,255,.2)" : "transparent", color: mapDays === opt.v ? "#6c63ff" : "#64748b" }}>
+                      {opt.l}
+                    </button>
+                  ))}
+                </div>
               </div>
-              {loginHistory.length === 0 ? (
-                <p style={{ color: "#64748b", textAlign: "center", padding: "20px 0", fontSize: 13 }}>No login history yet.</p>
-              ) : loginHistory.map((l, i) => {
+              {filteredHistory.length === 0 ? (
+                <p style={{ color: "#64748b", textAlign: "center", padding: "20px 0", fontSize: 13 }}>No logins in this time range.</p>
+              ) : filteredHistory.map((l, i) => {
                 const isThreat = !!l.threat_flag;
                 const isNew = l.id === newLoginId;
                 const color = isThreat ? "#ef4444" : "#10b981";
@@ -810,10 +997,18 @@ export default function DashboardPage() {
                           </span>
                         )}
                       </div>
-                      <div style={{ display: "flex", gap: 14, marginTop: 5, fontSize: 11, color: "#64748b", fontFamily: "monospace", alignItems: "center" }}>
+                      <div style={{ display: "flex", gap: 14, marginTop: 5, fontSize: 11, color: "#64748b", fontFamily: "monospace", alignItems: "center", flexWrap: "wrap" }}>
                         {l.ip && <span>IP: {l.ip}</span>}
                         <span style={{ color }}>{isThreat ? "⚠ Flagged" : "✓ Safe"}</span>
                         <span style={{ marginLeft: "auto" }}>{timeAgo}</span>
+                        {isAdmin && l.user_id !== user?.id && (
+                          <button
+                            onClick={() => terminateUser(l.user_id, [l.city, l.country].filter(Boolean).join(", ") || "Unknown")}
+                            style={{ background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.3)", color: "#ef4444", borderRadius: 4, padding: "2px 8px", fontSize: 10, cursor: "pointer", fontWeight: 700, letterSpacing: 0.3 }}
+                          >
+                            🔒 Terminate
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
