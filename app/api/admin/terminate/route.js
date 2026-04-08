@@ -45,14 +45,16 @@ export async function POST(req) {
   }
 
   try {
-    // Ban the user — this immediately invalidates all active sessions
-    // and prevents future logins. Can be reversed in Supabase dashboard.
+    // 1. Ban the user — invalidates all active sessions
     const { error: banErr } = await adminSupabase.auth.admin.updateUserById(userId, {
-      ban_duration: "876000h",   // ~100 years (effectively permanent)
+      ban_duration: "876000h",
     });
     if (banErr) throw banErr;
 
-    // Audit trail
+    // 2. Mark is_terminated in profiles (so dashboard detects and redirects on next load)
+    await adminSupabase.from("profiles").update({ is_terminated: true }).eq("id", userId);
+
+    // 3. Audit trail
     await adminSupabase.from("audit_logs").insert({
       user_id: caller.id,
       action: "TERMINATE",

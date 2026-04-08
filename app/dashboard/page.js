@@ -195,7 +195,7 @@ function AddPwModal({ onSave, onClose }) {
 // ─── Main Dashboard ──────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const router = useRouter();
-  const { user, role, loading: roleLoading } = useRole();
+  const { user, role, loading: roleLoading, isTerminated } = useRole();
   const isAdmin = role === "admin";
 
   // data
@@ -204,6 +204,7 @@ export default function DashboardPage() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [threats, setThreats] = useState([]);
   const [loginHistory, setLoginHistory] = useState([]);
+  const [appeals, setAppeals] = useState([]);
 
   // UI state
   const [activeTab, setActiveTab] = useState("files");
@@ -228,6 +229,14 @@ export default function DashboardPage() {
   const aiChatRef = useRef(null);
 
   useEffect(() => { if (!roleLoading && !user) router.push("/"); }, [roleLoading, user, router]);
+
+  // Detect terminated accounts → redirect to /terminated page
+  useEffect(() => {
+    if (!roleLoading && user && isTerminated) {
+      localStorage.setItem("sv_terminated_user", JSON.stringify({ userId: user.id, email: user.email }));
+      router.push("/terminated");
+    }
+  }, [roleLoading, user, isTerminated, router]);
 
   // ── fetchers ──────────────────────────────────────────────────────────────
   const fetchFiles = useCallback(async () => {
@@ -271,6 +280,12 @@ export default function DashboardPage() {
     setLoginHistory(data || []);
   }, [user, isAdmin]);
 
+  const fetchAppeals = useCallback(async () => {
+    if (!isAdmin) return;
+    const { data } = await supabase.from("appeals").select("*").order("created_at", { ascending: false });
+    setAppeals(data || []);
+  }, [isAdmin]);
+
   // Clear all data when user changes (fixes files-not-showing after re-login)
   useEffect(() => {
     setFiles([]);
@@ -288,9 +303,9 @@ export default function DashboardPage() {
       fetchPasswords();
       fetchAuditLogs();
       fetchThreats();
-      if (isAdmin) fetchLoginHistory(); // Login history only for admins
+      if (isAdmin) { fetchLoginHistory(); fetchAppeals(); }
     }
-  }, [user?.id, role, fetchFiles, fetchPasswords, fetchAuditLogs, fetchThreats, fetchLoginHistory, isAdmin]);
+  }, [user?.id, role, fetchFiles, fetchPasswords, fetchAuditLogs, fetchThreats, fetchLoginHistory, fetchAppeals, isAdmin]);
 
   // ── Realtime ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -451,6 +466,32 @@ export default function DashboardPage() {
       pw > 0 ? `<strong>${pw} password${pw !== 1 ? "s" : ""}</strong> in your vault.` : "Password vault is empty — add some credentials!",
     ];
     return tips.join("<br>") + "<br><br>Ask me anything about your files, threats, passwords, encryption, or login history!";
+  }
+
+  // ── Admin: handle user appeals ────────────────────────────────────
+  async function handleUnban(appeal) {
+    if (!window.confirm(`Approve appeal and UNBAN ${appeal.user_email || appeal.user_id.substring(0, 8)}?`)) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    const res = await fetch("/api/admin/unban", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${session?.access_token}` },
+      body: JSON.stringify({ userId: appeal.user_id, appealId: appeal.id, action: "approve" }),
+    });
+    const data = await res.json();
+    if (res.ok) { toast.success("✅ User unbanned & appeal approved"); fetchAppeals(); }
+    else toast.error(data.error || "Unban failed");
+  }
+
+  async function handleRejectAppeal(appeal) {
+    const note = window.prompt("Optional: add a note for the user (visible in their appeal status):") || "";
+    const { data: { session } } = await supabase.auth.getSession();
+    const res = await fetch("/api/admin/unban", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${session?.access_token}` },
+      body: JSON.stringify({ userId: appeal.user_id, appealId: appeal.id, action: "reject", adminNote: note }),
+    });
+    if (res.ok) { toast.success("❌ Appeal rejected"); fetchAppeals(); }
+    else toast.error("Reject failed");
   }
 
   // ── Admin: fetch full activity of a suspected user for analysis ──────────
@@ -670,7 +711,10 @@ export default function DashboardPage() {
           { id: "passwords", label: "🔐 Password Vault" },
           { id: "audit",    label: "📋 Audit Log" },
           { id: "threats",  label: "⚠️ Threats", badge: activeThreats.length || null, badgeClass: "" },
-          ...(isAdmin ? [{ id: "logins", label: "🌍 Login Map", badge: "ADMIN", badgeClass: "info" }] : []),
+          ...(isAdmin ? [
+            { id: "logins", label: "🌍 Login Map", badge: "ADMIN", badgeClass: "info" },
+            { id: "appeals", label: "🆘 Appeals", badge: appeals.filter(a => a.status === "pending").length || null, badgeClass: "" },
+          ] : []),
           { id: "ai",       label: "✨ AI Assistant", badge: "NEW", badgeClass: "info" },
         ].map(tab => (
           <button key={tab.id} className={`d-tab${activeTab === tab.id ? " active" : ""}`} onClick={() => setActiveTab(tab.id)}>
@@ -1018,6 +1062,74 @@ export default function DashboardPage() {
           );
         })()}
 
+
+        {/* ── APPEALS TAB (admin only) ── */}
+        {activeTab === "appeals" && isAdmin && (
+          <div style={{ background: "#161b24", border: "1px solid #ffffff12", borderRadius: 14, padding: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: 18 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>🆘 User Appeals</div>
+              <button onClick={fetchAppeals} style={{ marginLeft: "auto", fontSize: 11, color: "#64748b", background: "transparent", border: "1px solid #ffffff15", borderRadius: 6, padding: "3px 10px", cursor: "pointer" }}>↻ Refresh</button>
+            </div>
+
+            {appeals.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "28px 0", color: "#64748b" }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
+                <p style={{ fontSize: 13 }}>No appeals submitted yet.</p>
+              </div>
+            ) : appeals.map(a => {
+              const statusColor = { pending: "#f59e0b", approved: "#10b981", rejected: "#ef4444" };
+              const statusBg    = { pending: "rgba(245,158,11,.12)", approved: "rgba(16,185,129,.12)", rejected: "rgba(239,68,68,.12)" };
+              const isPending = a.status === "pending";
+              return (
+                <div key={a.id} style={{ background: "#1c2130", border: `1px solid ${statusColor[a.status]}30`, borderRadius: 12, padding: "16px 18px", marginBottom: 12 }}>
+                  {/* Header */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                    <div style={{ width: 36, height: 36, borderRadius: "50%", background: "rgba(108,99,255,.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>👤</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {a.user_email || `usr:${a.user_id?.substring(0, 16)}`}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{fmtDate(a.created_at)}</div>
+                    </div>
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: statusBg[a.status], color: statusColor[a.status] }}>
+                      {a.status === "pending" ? "⏳ Pending" : a.status === "approved" ? "✅ Approved" : "❌ Rejected"}
+                    </span>
+                  </div>
+
+                  {/* Appeal message */}
+                  <div style={{ background: "#0f1319", borderRadius: 8, padding: "10px 12px", fontSize: 13, color: "#94a3b8", lineHeight: 1.6, marginBottom: isPending ? 12 : 0, fontStyle: "italic" }}>
+                    "{a.message}"
+                  </div>
+
+                  {/* Admin note (for resolved appeals) */}
+                  {a.admin_note && !isPending && (
+                    <div style={{ fontSize: 11, color: "#64748b", marginTop: 8, padding: "6px 10px", background: "#ffffff05", borderRadius: 6, borderLeft: `2px solid ${statusColor[a.status]}` }}>
+                      Admin note: {a.admin_note}
+                    </div>
+                  )}
+
+                  {/* Actions for pending appeals */}
+                  {isPending && (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => handleUnban(a)}
+                        style={{ flex: 1, padding: "9px", background: "rgba(16,185,129,.15)", border: "1px solid rgba(16,185,129,.3)", borderRadius: 8, color: "#10b981", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                        ✅ Approve & Unban
+                      </button>
+                      <button onClick={() => handleRejectAppeal(a)}
+                        style={{ flex: 1, padding: "9px", background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.25)", borderRadius: 8, color: "#ef4444", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                        ❌ Reject Appeal
+                      </button>
+                      <button onClick={() => analyseUser({ user_id: a.user_id, threat_flag: "manual_review", city: "", country: "", ip: "" })}
+                        style={{ padding: "9px 14px", background: "rgba(108,99,255,.12)", border: "1px solid rgba(108,99,255,.25)", borderRadius: 8, color: "#a78bfa", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                        🔍
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* ── AI ASSISTANT TAB ── */}
         {activeTab === "ai" && (

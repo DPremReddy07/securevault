@@ -153,9 +153,21 @@ export default function LoginPage() {
       toast.success("Welcome back!");
       router.push("/dashboard");
     } catch (err) {
-      toast.error(err.message || "Login failed. Please try again.");
-      captchaRef.current?.resetCaptcha();
-      setCaptchaToken(null);
+      const msg = err.message || "";
+      // Supabase returns "User is banned" when an admin has terminated the account
+      if (msg.toLowerCase().includes("banned") || msg.toLowerCase().includes("user is banned")) {
+        // Store email so the /terminated page can identify the user
+        localStorage.setItem("sv_terminated_user", JSON.stringify({ email, userId: null }));
+        toast("🔒 Your account has been suspended. Redirecting...", {
+          duration: 3000,
+          style: { background: "#7f1d1d", color: "#fff" },
+        });
+        setTimeout(() => router.push("/terminated"), 2000);
+      } else {
+        toast.error(msg || "Login failed. Please try again.");
+        captchaRef.current?.resetCaptcha();
+        setCaptchaToken(null);
+      }
     } finally {
       setLoading(false);
     }
