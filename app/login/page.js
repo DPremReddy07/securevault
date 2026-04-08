@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import HCaptcha from "@hcaptcha/react-hcaptcha";
 import { supabase } from "@/lib/supabase";
-import { LogIn, Eye, EyeOff, ShieldCheck, Lock } from "lucide-react";
+import { LogIn, Eye, EyeOff, ShieldCheck, Lock, Home } from "lucide-react";
 import toast from "react-hot-toast";
 
 const SITE_KEY = process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY;
@@ -187,6 +187,9 @@ export default function LoginPage() {
         padding: "1.5rem",
       }}
     >
+      <Link href="/" style={{ position: "absolute", top: "1.5rem", left: "1.5rem", color: "var(--text-secondary)", transition: "color 0.2s" }} onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-primary)")} onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-secondary)")}>
+        <Home size={24} />
+      </Link>
       {/* Background mesh */}
       <div
         aria-hidden="true"

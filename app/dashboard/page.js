@@ -6,7 +6,7 @@ import CryptoJS from "crypto-js";
 import toast from "react-hot-toast";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/lib/useRole";
-import { Shield, LogOut, Upload, Download, Trash2, FileText, Activity, AlertTriangle, Globe, CheckCircle, Eye, EyeOff, Copy, Plus, Search, Share2, Lock, X, MessageSquare, Map } from "lucide-react";
+import { Shield, LogOut, Upload, Download, Trash2, FileText, Activity, AlertTriangle, Globe, CheckCircle, Eye, EyeOff, Copy, Plus, Search, Share2, Lock, X, MessageSquare, Map, Home } from "lucide-react";
 
 const SECRET_KEY = "DEMO_SECRET_KEY_CHANGE_ME";
 
@@ -695,6 +695,10 @@ export default function DashboardPage() {
           <Shield size={20} color="#6c63ff" /> SecureVault
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button onClick={() => router.push("/")}
+            style={{ fontSize: 12, padding: "5px 12px", borderRadius: 8, border: "1px solid #ffffff20", background: "transparent", color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
+            <Home size={13} /> Home
+          </button>
           <span style={{ fontSize: 12, color: "#94a3b8", fontFamily: "monospace", padding: "4px 10px", background: "#1c2130", borderRadius: 20, border: "1px solid #ffffff12" }}>{user?.email}</span>
           {isAdmin && <span style={{ fontSize: 11, padding: "3px 8px", background: "rgba(108,99,255,0.2)", color: "#6c63ff", borderRadius: 10, fontWeight: 700 }}>ADMIN</span>}
           <button onClick={async () => { await supabase.auth.signOut(); router.push("/register"); }}
